@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TicketGenerator\TicketGenerator.csproj" />
+    <!-- link the co-located slice tests back in (references/test-compilation.md) -->
+    <Compile Include="..\TicketGenerator\Features\**\*.Tests.cs" LinkBase="Features" />
+    <Compile Include="..\TicketGenerator\Infrastructure\**\*.Tests.cs" LinkBase="Infrastructure" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="*" />
+    <PackageReference Include="PdfPig" Version="0.1.16" />
+    <PackageReference Include="xunit" Version="*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="*" />
+    <!-- worker tests invoke handlers directly with a TestLambdaContext — no WebApplicationFactory,
+         so no Microsoft.AspNetCore.Mvc.Testing here (references/test-compilation.md). -->
+    <PackageReference Include="Amazon.Lambda.TestUtilities" Version="*" />
+    <PackageReference Include="NetArchTest.Rules" Version="*" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  RouteGo Ticket Generator. Two SQS-triggered functions (one per capability) that turn Booking's
+  BookingConfirmed and BookingSeatsChanged events into one private PDF e-ticket per booking and
+  announce TicketReady. Deploy: `dotnet publish` is run by `sam build`; see README.md.
+
+Parameters:
+  ConfirmedQueueArn:
+    Type: String
+    Description: ARN of ticket-confirmed-q (SNS filter on routego-booking-events -> BookingConfirmed)
+  SeatsChangedQueueArn:
+    Type: String
+    Description: ARN of ticket-seats-changed-q (SNS filter on routego-booking-events -> BookingSeatsChanged)
+  TicketBucket:
+    Type: String
+    Description: Private tickets bucket, for example routego-tickets-<account>
+  TicketTopicArn:
+    Type: String
+    Description: ARN of routego-ticket-events
+  KmsKeyArn:
+    Type: String
+    Description: ARN of the alias/routego key that encrypts the tickets bucket and the topic
+  AlarmTopicArn:
+    Type: String
+    Description: ARN of routego-alarms
+
+Globals:
+  Function:
+    Runtime: dotnet10
+    Architectures: [arm64]       # matches the linux-arm64 publish; keep the two in step
+    MemorySize: 1024             # PDF rendering is CPU bound; more memory is more CPU, so measure
+    Timeout: 30                  # the queues' visibility timeout must be at least 6 x this (180 s)
+    Environment:
+      Variables:
+        TICKET_BUCKET: !Ref TicketBucket
+        TICKET_TOPIC_ARN: !Ref TicketTopicArn
+
+Resources:
+  IssueTicket:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../TicketGenerator/
+      Handler: TicketGenerator::TicketGenerator.Features.Tickets.IssueTicket.IssueTicketFunction_HandleAsync_Generated::HandleAsync
+      Events:
+        Confirmed:
+          Type: SQS
+          Properties:
+            Queue: !Ref ConfirmedQueueArn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig: { MaximumConcurrency: 5 }
+
+  ReissueTicket:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ../TicketGenerator/
+      Handler: TicketGenerator::TicketGenerator.Features.Tickets.ReissueTicket.ReissueTicketFunction_HandleAsync_Generated::HandleAsync
+      Events:
+        SeatsChanged:
+          Type: SQS
+          Properties:
+            Queue: !Ref SeatsChangedQueueArn
+            BatchSize: 10
+            FunctionResponseTypes: [ReportBatchItemFailures]
+            ScalingConfig: { MaximumConcurrency: 5 }
+
+  # Least privilege, written once and attached to both functions' roles.
+  # Beyond doc 08: the store reads the stored ticket's change time (HEAD needs s3:GetObject), and S3
+  # answers 403 instead of 404 for a missing key unless the role may also list the bucket.
+  TicketAccess:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Roles: [!Ref IssueTicketRole, !Ref ReissueTicketRole]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [s3:GetObject, s3:PutObject]
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TicketBucket}/tickets/*
+          - Effect: Allow
+            Action: s3:ListBucket
+            Resource: !Sub arn:${AWS::Partition}:s3:::${TicketBucket}
+            Condition:
+              StringLike: { 's3:prefix': ['tickets/*'] }
+          - Effect: Allow
+            Action: sns:Publish
+            Resource: !Ref TicketTopicArn
+          - Effect: Allow
+            Action: [kms:GenerateDataKey, kms:Decrypt]
+            Resource: !Ref KmsKeyArn
+
+  # The alert named by the spec: TICKET_NOT_GENERATED is logged on the receive that parks an event.
+  IssueTicketNotGenerated:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${IssueTicket}
+      FilterPattern: '"TICKET_NOT_GENERATED"'
+      MetricTransformations:
+        - { MetricNamespace: RouteGo/TicketGenerator, MetricName: TicketNotGenerated, MetricValue: '1', DefaultValue: 0 }
+
+  ReissueTicketNotGenerated:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ReissueTicket}
+      FilterPattern: '"TICKET_NOT_GENERATED"'
+      MetricTransformations:
+        - { MetricNamespace: RouteGo/TicketGenerator, MetricName: TicketNotGenerated, MetricValue: '1', DefaultValue: 0 }
+
+  TicketNotGeneratedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: A booking event could not be turned into a ticket and was parked. Fix the cause, then redrive the DLQ.
+      Namespace: RouteGo/TicketGenerator
+      MetricName: TicketNotGenerated
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+  IssueTicketErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: The IssueTicket invocation failed.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref IssueTicket }]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]
+
+  ReissueTicketErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: The ReissueTicket invocation failed.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref ReissueTicket }]
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopicArn]

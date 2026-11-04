@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Fixed, shared across ALL RouteGo apps: one secrets.json per developer, one entry per app
+         (each app's key is its own secret name), so a developer configures secrets once. -->
+    <UserSecretsId>routego-platform</UserSecretsId>
+    <AWSProjectType>Lambda</AWSProjectType>
+    <!-- standard Lambda: trims cold-start JIT (references/lambda-worker.md) -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- Amazon.Lambda.Annotations source generator emits the [LambdaFunction] boilerplate.
+         Class-library model (deploy handler = generated method); a fresh scaffold has no
+         function yet, so OutputType is omitted (library). Switch to <OutputType>Exe</OutputType>
+         only if you adopt the executable-assembly model once a function exists. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The ticket PDF carries its own fonts (copied beside the assembly, so they ship in the deployable): QuestPDF has no rupee glyph and a Lambda has no system fonts. -->
+    <None Include="..\infra\fonts\*.ttf" Link="fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- test files are co-located on disk but compiled into {Project}.Tests (references/test-compilation.md) -->
+    <Compile Remove="Features/**/*.Tests.cs" />
+    <Compile Remove="Infrastructure/**/*.Tests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Generic-host building blocks the Web SDK gives the api/ui stacks for free: HostApplicationBuilder
+         (the [LambdaStartup] composition root), IConfiguration (SecretResolver), ILoggingBuilder +
+         DI (AddObservability), and user-secrets loading. A worker is a plain class library, so it
+         references them explicitly (references/lambda-worker.md). -->
+    <PackageReference Include="Amazon.Lambda.SQSEvents" Version="3.0.1" />
+    <PackageReference Include="AWSSDK.S3" Version="4.0.104.8" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.100.22" />
+    <PackageReference Include="FluentValidation" Version="12.2.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="*" />
+    <!-- IHttpClientFactory / AddApiClient. The web SDKs get this from the shared framework; a plain
+         class library must reference it, so Infrastructure/ApiClientRegistration.cs compiles on this
+         stack too (references/configuration.md). -->
+    <PackageReference Include="Microsoft.Extensions.Http" Version="*" />
+    <!-- Lambda hosting via annotations (references/lambda-worker.md). Reference latest stable. -->
+    <PackageReference Include="Amazon.Lambda.Annotations" Version="*" />
+    <PackageReference Include="Amazon.Lambda.Core" Version="*" />
+    <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="*" />
+    <!-- The event packages your triggers use (Amazon.Lambda.SQSEvents, Amazon.Lambda.S3Events, ...)
+         and Dapper / Npgsql / FluentValidation are added per-trigger / per-slice by the sibling
+         skill (skills-dotnet-lambda-vertical-slice), NOT here. -->
+    <!-- Standard AWS Secrets Manager access — baked into every project (references/secrets.md). -->
+    <PackageReference Include="AWSSDK.SecretsManager.Caching" Version="*" />
+    <PackageReference Include="AWSSDK.SecretsManager" Version="*" />
+    <PackageReference Include="AWSSDK.Extensions.NETCore.Setup" Version="*" />
+    <!-- OpenTelemetry — baked in (references/observability.md). PINNED: OTel .NET has breaking
+         changes across versions, so these do NOT float with Version="*". No ASP.NET Core
+         instrumentation package — a worker has no HTTP pipeline. -->
+    <PackageReference Include="OpenTelemetry" Version="1.15.*" />
+    <PackageReference Include="OpenTelemetry.Api" Version="1.15.*" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.*" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.*" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.*" />
+    <PackageReference Include="QRCoder" Version="1.8.1" />
+    <PackageReference Include="QuestPDF" Version="2026.9.1" />
+  </ItemGroup>
+
+</Project>

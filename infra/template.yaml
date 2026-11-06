@@ -91,10 +91,26 @@ Resources:
             Resource: !Ref KmsKeyArn
 
   # The alert named by the spec: TICKET_NOT_GENERATED is logged on the receive that parks an event.
+  # The functions' log groups, declared here instead of left to Lambda: Lambda only creates
+  # /aws/lambda/<name> on the first invocation, so on a fresh deploy the metric filters below failed with
+  # "The specified log group does not exist" and the whole stack rolled back. Also caps retention
+  # (the architecture's 7 days) instead of AWS's default of keeping logs forever.
+  IssueTicketLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${IssueTicket}
+      RetentionInDays: 7
+
+  ReissueTicketLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ReissueTicket}
+      RetentionInDays: 7
+
   IssueTicketNotGenerated:
     Type: AWS::Logs::MetricFilter
     Properties:
-      LogGroupName: !Sub /aws/lambda/${IssueTicket}
+      LogGroupName: !Ref IssueTicketLogGroup
       FilterPattern: '"TICKET_NOT_GENERATED"'
       MetricTransformations:
         - { MetricNamespace: RouteGo/TicketGenerator, MetricName: TicketNotGenerated, MetricValue: '1', DefaultValue: 0 }
@@ -102,7 +118,7 @@ Resources:
   ReissueTicketNotGenerated:
     Type: AWS::Logs::MetricFilter
     Properties:
-      LogGroupName: !Sub /aws/lambda/${ReissueTicket}
+      LogGroupName: !Ref ReissueTicketLogGroup
       FilterPattern: '"TICKET_NOT_GENERATED"'
       MetricTransformations:
         - { MetricNamespace: RouteGo/TicketGenerator, MetricName: TicketNotGenerated, MetricValue: '1', DefaultValue: 0 }
